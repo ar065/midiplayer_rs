@@ -5,6 +5,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+libloading = "0.7.0"
+lazy_static = "1.4.0"
 
 [profile.dev]
 debug = 0
