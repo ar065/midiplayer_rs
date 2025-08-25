@@ -8,6 +8,7 @@ pub struct ParsedMidi {
     pub deltas: Vec<(u32, u32)>,
     pub total_ticks: u64,
     pub total_duration: Duration,
+    pub note_count: u64,
 }
 
 const KIND_BIT: u32 = 1 << 31;
@@ -40,6 +41,7 @@ pub fn parse_midi_events(
     let mut multiplier: f64 = 0.0;
 
     let mut total_ticks: u64 = 0;
+    let mut note_count: u64 = 0;
     let mut total_us_acc: u128 = 0;
 
     loop {
@@ -62,6 +64,7 @@ pub fn parse_midi_events(
 
                     if status < 0xF0 {
                         if (0x90..=0x9F).contains(&status) {
+                            note_count += 1;
                             let velocity = ((message >> 16) & 0xFF) as u8;
                             if velocity > min_velocity {
                                 events.push(pack_event(message, false));
@@ -125,6 +128,7 @@ pub fn parse_midi_events(
         deltas,
         total_ticks,
         total_duration,
+        note_count,
     }
 }
 

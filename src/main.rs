@@ -2,6 +2,8 @@ mod midi;
 use std::sync::Arc;
 use std::time::Instant;
 
+use thousands::Separable;
+
 use crate::midi::player::play_parsed_events;
 // use crate::midi::player::play_events;
 // use crate::midi::{loader::load_midi_file, player::parse_midi_events, player::play_events};
@@ -18,7 +20,7 @@ fn main() {
     let stream = Arc::new(stream);
 
     let (tracks, time_div) = load_midi_file(
-        "/run/media/ar06/74EAEFC8EAEF8528/Midis/A-1/Dance Till Your PC runs out of RAM 1.3b.mid",
+        "/run/media/ar06/74EAEFC8EAEF8528/Midis/A-1/Coldplay - Viva La Vida black final.mid",
     )
     .unwrap();
     println!("Tracks: {}, Time division: {}", tracks.len(), time_div);
@@ -32,12 +34,14 @@ fn main() {
 
     println!(
         "Parsed MIDI Summary:\n\
-     - Events: {:>6}\n\
-     - Total Ticks: {:>6}\n\
+     - Events: {}\n\
+     - Note Count: {}\n\
+     - Total Ticks: {}\n\
      - Total Duration: {:02}:{:02}.{:03}\n\
      - Parse Time: {:.2?}",
-        parsed.events.len(),
-        parsed.total_ticks,
+        parsed.events.len().separate_with_commas(),
+        parsed.note_count.separate_with_commas(),
+        parsed.total_ticks.separate_with_commas(),
         minutes,
         seconds,
         millis,
