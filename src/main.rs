@@ -19,10 +19,8 @@ fn main() {
     let stream = kdmapi_ref.open_stream().unwrap();
     let stream = Arc::new(stream);
 
-    let (tracks, time_div) = load_midi_file(
-        "/run/media/ar06/74EAEFC8EAEF8528/Midis/A-1/Coldplay - Viva La Vida black final.mid",
-    )
-    .unwrap();
+    let (tracks, time_div) =
+        load_midi_file("/run/media/ar06/74EAEFC8EAEF8528/Midis/midis2/tau2.5.9.mid").unwrap();
     println!("Tracks: {}, Time division: {}", tracks.len(), time_div);
 
     let start = Instant::now();

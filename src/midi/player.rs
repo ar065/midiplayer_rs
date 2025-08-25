@@ -64,8 +64,10 @@ pub fn parse_midi_events(
 
                     if status < 0xF0 {
                         if (0x90..=0x9F).contains(&status) {
-                            note_count += 1;
                             let velocity = ((message >> 16) & 0xFF) as u8;
+                            if velocity > 0 {
+                                note_count += 1;
+                            }
                             if velocity > min_velocity {
                                 events.push(pack_event(message, false));
                             }
