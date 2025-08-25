@@ -35,6 +35,7 @@ pub fn load_midi_file<P: AsRef<Path>>(filename: P) -> io::Result<(Vec<TrackData>
     let mut buf2 = [0u8; 2];
     reader.read_exact(&mut buf2)?;
     let format = u16::from_be_bytes(buf2);
+    println!("Midi format: {}", format);
 
     reader.read_exact(&mut buf2)?;
     let num_tracks = u16::from_be_bytes(buf2) as usize;
