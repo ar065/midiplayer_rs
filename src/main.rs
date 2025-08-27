@@ -1,5 +1,4 @@
 mod midi;
-use std::process;
 use std::sync::Arc;
 use std::time::Instant;
 
