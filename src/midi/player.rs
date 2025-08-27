@@ -1,5 +1,5 @@
 use crate::midi::track_data::TrackData;
-use crate::midi::utils::{delay_execution_100ns, get_time_100ns};
+use crate::midi::utils::{delay_execution_100ns, get_time_100ns, pack_event, unpack_event};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -9,23 +9,6 @@ pub struct ParsedMidi {
     pub total_ticks: u64,
     pub total_duration: Duration,
     pub note_count: u64,
-}
-
-const KIND_BIT: u32 = 1 << 31;
-const DATA_MASK: u32 = 0x7FFFFFFF;
-
-#[inline(always)]
-fn pack_event(data: u32, is_tempo: bool) -> u32 {
-    if is_tempo {
-        data | KIND_BIT
-    } else {
-        data & DATA_MASK
-    }
-}
-
-#[inline(always)]
-fn unpack_event(packed: u32) -> (u32, bool) {
-    ((packed & DATA_MASK), (packed & KIND_BIT) != 0)
 }
 
 pub fn parse_midi_events(

@@ -1,27 +1,50 @@
 mod midi;
+use std::process;
 use std::sync::Arc;
 use std::time::Instant;
 
 use thousands::Separable;
 
+use clap::{Parser, ValueHint};
+
 use crate::midi::player::play_parsed_events;
-// use crate::midi::player::play_events;
-// use crate::midi::{loader::load_midi_file, player::parse_midi_events, player::play_events};
 use crate::midi::{loader::load_midi_file, player::parse_midi_events};
 
 mod kdmapi;
 use crate::kdmapi::KDMAPI;
 
+macro_rules! must {
+    ($expr:expr) => {
+        match $expr {
+            Ok(val) => val,
+            Err(err) => {
+                eprintln!("Error: {}", err);
+                std::process::exit(1);
+            }
+        }
+    };
+}
+
+#[derive(Parser, Debug)]
+#[command(name = "midi_player", about = "Play a MIDI file", author, version)]
+struct Args {
+    /// Midi file to play
+    #[arg(
+        short = 'f',
+        long = "file",
+        value_name = "midi_file",
+        value_hint = ValueHint::FilePath,
+        required = true
+    )]
+    file: String,
+}
+
 fn main() {
-    println!("Hello, world!");
+    let args = Args::parse();
+    let file = args.file;
 
-    let kdmapi_ref = KDMAPI.as_ref().unwrap();
-    let stream = kdmapi_ref.open_stream().unwrap();
-    let stream = Arc::new(stream);
-
-    let (tracks, time_div) =
-        load_midi_file("/run/media/ar06/74EAEFC8EAEF8528/Midis/midis2/tau2.5.9.mid").unwrap();
-    println!("Tracks: {}, Time division: {}", tracks.len(), time_div);
+    let (tracks, time_div) = must!(load_midi_file(file));
+    let num_tracks = tracks.len();
 
     let start = Instant::now();
     let parsed = parse_midi_events(tracks, time_div, 0);
@@ -32,11 +55,15 @@ fn main() {
 
     println!(
         "Parsed MIDI Summary:\n\
+     - Tracks: {}\n\
+     - Time division: {}\n\
      - Events: {}\n\
      - Note Count: {}\n\
      - Total Ticks: {}\n\
      - Total Duration: {:02}:{:02}.{:03}\n\
      - Parse Time: {:.2?}",
+        num_tracks.separate_with_commas(),
+        time_div,
         parsed.events.len().separate_with_commas(),
         parsed.note_count.separate_with_commas(),
         parsed.total_ticks.separate_with_commas(),
@@ -46,10 +73,12 @@ fn main() {
         start.elapsed()
     );
 
+    let kdmapi_ref = KDMAPI.as_ref().unwrap();
+    let stream = kdmapi_ref.open_stream().unwrap();
+    let stream = Arc::new(stream);
+
     let play_stream = Arc::clone(&stream);
-    // play_events(&events, move |data| {
-    //     play_stream.send_direct_data(data);
-    // });
+
     play_parsed_events(&parsed, time_div, move |data| {
         play_stream.send_direct_data(data);
     });
