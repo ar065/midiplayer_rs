@@ -121,10 +121,17 @@ pub fn play_parsed_events(
     parsed: &ParsedMidi,
     time_div: u16,
     mut send_direct_data: impl FnMut(u32) + Send + 'static,
+    delay_fn: Option<Box<dyn FnMut(i64) + Send + 'static>>,
 ) {
     if parsed.events.is_empty() {
         return;
     }
+
+    let default_delay = |ns: i64| delay_execution_100ns(ns);
+    let mut delay_fn = match delay_fn {
+        Some(f) => f,
+        None => Box::new(move |ns| default_delay(ns)),
+    };
 
     let mut bpm_us_per_qn: u64;
     let mut tick: u64 = 0;
@@ -170,7 +177,7 @@ pub fn play_parsed_events(
                     if sleep_time <= 0 {
                         delta = delta.min(max_drift);
                     } else {
-                        delay_execution_100ns(sleep_time);
+                        delay_fn(sleep_time);
                     }
 
                     delta_idx += 1;

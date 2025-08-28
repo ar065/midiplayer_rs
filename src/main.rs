@@ -78,7 +78,12 @@ fn main() {
 
     let play_stream = Arc::clone(&stream);
 
-    play_parsed_events(&parsed, time_div, move |data| {
-        play_stream.send_direct_data(data);
-    });
+    play_parsed_events(
+        &parsed,
+        time_div,
+        move |data| {
+            play_stream.send_direct_data(data);
+        },
+        None,
+    );
 }
