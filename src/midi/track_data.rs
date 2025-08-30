@@ -6,6 +6,7 @@ pub struct TrackData {
     pub length: usize,
     pub message: u32,
     pub temp: u32,
+    pub last_status: Option<u8>,
 }
 
 impl TrackData {
@@ -19,6 +20,7 @@ impl TrackData {
             length: capacity,
             message: 0,
             temp: 0,
+            last_status: None,
         }
     }
 
@@ -44,12 +46,25 @@ impl TrackData {
     }
 
     /// Read the next status byte if present and update `message`.
+    /// Also handles running status
     pub fn update_command(&mut self) {
-        if self.offset < self.length {
-            let byte = self.data[self.offset];
-            if byte >= 0x80 {
-                self.offset += 1;
-                self.message = u32::from(byte);
+        if self.offset >= self.length {
+            return;
+        }
+
+        let byte = self.data[self.offset];
+        if byte >= 0x80 {
+            // new status byte
+            self.offset += 1;
+            self.message = u32::from(byte);
+            self.last_status = Some(byte);
+        } else {
+            // running status: reuse last_status if available
+            if let Some(status) = self.last_status {
+                self.message = u32::from(status);
+            } else {
+                // invalid MIDI: data byte without any running status
+                self.message = 0; // or bail
             }
         }
     }
@@ -60,18 +75,15 @@ impl TrackData {
             return;
         }
 
+        self.temp = 0; // make sure to reset so running status is ok
+
         let msg_type = (self.message & 0xFF) as u8;
         match msg_type {
             0x00..=0xBF | 0xE0..=0xEf => {
-                // 2-byte messages (except on Cn and Dn types)
-                let needed = if msg_type < 0xC0 { 2 } else { 2 };
-                if self.offset + needed <= self.length {
-                    // Combine bytes into temp
-                    self.temp = 0;
-                    for i in 0..needed {
-                        self.temp |= u32::from(self.data[self.offset + i]) << ((i + 1) * 8);
-                    }
-                    self.offset += needed;
+                if self.offset + 2 <= self.length {
+                    self.temp = u32::from(self.data[self.offset]) << 8;
+                    self.temp |= u32::from(self.data[self.offset + 1]) << 16;
+                    self.offset += 2;
                 }
             }
             0xC0..=0xDF => {
