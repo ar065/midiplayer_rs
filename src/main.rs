@@ -1,3 +1,5 @@
+// Super simple command line midi player
+
 mod midi;
 use std::sync::Arc;
 use std::time::Instant;

@@ -52,7 +52,7 @@ pub fn parse_midi_events(
                                 note_count += 1;
                             }
 
-                            // Make sure add event with 0 velocity.
+                            // Make sure add event with 0 velocity
                             // to make sure running status is correct.
                             if velocity >= min_velocity {
                                 events.push(pack_event(message, false));

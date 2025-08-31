@@ -28,6 +28,7 @@ pub fn delay_execution_100ns(delay_in_100ns: i64) {
     sleep(duration);
 }
 
+// Funny stuff that allows us to keep the memory usage so low
 const KIND_BIT: u32 = 1 << 31;
 const DATA_MASK: u32 = 0x7FFFFFFF;
 

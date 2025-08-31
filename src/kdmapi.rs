@@ -1,3 +1,6 @@
+// Modified KDMAPI Binding for rust that handles missing functions.
+// Not tested extensively!
+
 #![allow(dead_code)]
 use lazy_static::lazy_static;
 use libloading::{Error, Library, Symbol};
