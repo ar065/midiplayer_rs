@@ -8,7 +8,7 @@ use thousands::Separable;
 
 use clap::{Parser, ValueHint};
 
-use crate::midi::player::play_parsed_events;
+use crate::midi::player::{play_parsed_events, play_parsed_events_batched};
 use crate::midi::{loader::load_midi_file, player::parse_midi_events};
 
 mod kdmapi;
@@ -80,7 +80,7 @@ fn main() {
 
     let play_stream = Arc::clone(&stream);
 
-    play_parsed_events(
+    play_parsed_events_batched(
         &parsed,
         time_div,
         move |data| {
