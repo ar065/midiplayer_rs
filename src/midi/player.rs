@@ -1,26 +1,29 @@
 use crate::midi::track_data::TrackData;
-use crate::midi::utils::{delay_execution_100ns, get_time_100ns, pack_event, unpack_event};
+use crate::midi::utils::{delay_execution_100ns, get_time_100ns};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
 use thousands::Separable;
 
+#[derive(Debug, Copy, Clone)]
+pub struct Event {
+    pub data: u32,
+    pub track: u16,
+    pub is_tempo: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ParsedMidi {
-    pub events: Vec<u32>,
+    pub events: Vec<Event>,
     pub deltas: Vec<(u32, u32)>,
     pub total_ticks: u64,
     pub total_duration: Duration,
     pub note_count: u64,
 }
 
-pub fn parse_midi_events(
-    mut tracks: Vec<TrackData>,
-    time_div: u16,
-    min_velocity: u8,
-) -> ParsedMidi {
-    let mut events: Vec<u32> = Vec::with_capacity(1024);
+pub fn parse_midi_events(mut tracks: Vec<TrackData>, time_div: u16) -> ParsedMidi {
+    let mut events: Vec<Event> = Vec::with_capacity(1024);
     let mut deltas: Vec<(u32, u32)> = Vec::with_capacity(128);
 
     let mut tick: u64 = 0;
@@ -38,7 +41,9 @@ pub fn parse_midi_events(
         let mut any_active = false;
         let group_start = events.len() as u32;
 
-        for track in tracks.iter_mut() {
+        for (track_idx, track) in tracks.iter_mut().enumerate() {
+            let track_num: u16 = track_idx.try_into().expect("too many tracks (>65535)");
+
             if track.length == 0 {
                 continue;
             }
@@ -59,17 +64,26 @@ pub fn parse_midi_events(
                                 note_count += 1;
                             }
 
-                            // Make sure add event with 0 velocity
-                            // to make sure running status is correct.
-                            if velocity >= min_velocity {
-                                events.push(pack_event(message, false));
-                            }
+                            events.push(Event {
+                                data: message,
+                                track: track_num,
+                                is_tempo: false,
+                            });
                         } else {
-                            events.push(pack_event(message, false));
+                            events.push(Event {
+                                data: message,
+                                track: track_num,
+                                is_tempo: false,
+                            });
                         }
                     } else if status == 0xFF {
                         track.process_meta_event(&mut multiplier, &mut bpm_us_per_qn, time_div);
-                        events.push(pack_event(bpm_us_per_qn as u32, true));
+                        // events.push(pack_event(bpm_us_per_qn as u32, true));
+                        events.push(Event {
+                            data: bpm_us_per_qn as u32,
+                            track: track_num, // not needed but whatever
+                            is_tempo: true,
+                        });
                     }
 
                     track.update_tick();
@@ -141,7 +155,7 @@ pub fn parse_midi_events(
 pub fn play_parsed_events(
     parsed: &ParsedMidi,
     time_div: u16,
-    mut send_direct_data: impl FnMut(u32) + Send + 'static,
+    mut send_direct_data: impl FnMut(u32, u16) + Send + 'static,
     delay_fn: Option<Box<dyn FnMut(i64) + Send + 'static>>,
 ) {
     if parsed.events.is_empty() {
@@ -170,13 +184,15 @@ pub fn play_parsed_events(
     while i < n {
         loop {
             let packed = unsafe { *parsed.events.get_unchecked(i) };
-            let (data, is_tempo) = unpack_event(packed);
+            // let (data, is_tempo) = unpack_event(packed);
+            let data = packed.data;
+            let is_tempo = packed.is_tempo;
 
             if is_tempo {
                 bpm_us_per_qn = data as u64;
                 multiplier = (bpm_us_per_qn as f64) / (time_div as f64) * 10.0;
             } else {
-                send_direct_data(data);
+                send_direct_data(data, packed.track);
             }
 
             if delta_idx < n_deltas {
@@ -223,13 +239,14 @@ pub fn play_parsed_events(
 struct UnpackedEvent {
     idx: u32,
     data: u32,
+    track: u16,
     is_tempo: bool,
 }
 
 pub fn play_parsed_events_batched(
     parsed: &ParsedMidi,
     time_div: u16,
-    mut send_direct_data: impl FnMut(u32) + Send + 'static,
+    mut send_direct_data: impl FnMut(u32, u16) + Send + 'static,
     delay_fn: Option<Box<dyn FnMut(i64) + Send + 'static>>,
 ) {
     if parsed.events.is_empty() {
@@ -273,9 +290,13 @@ pub fn play_parsed_events_batched(
 
                 buf.clear();
                 for (idx, &packed) in (&mut iter).by_ref().take(batch_size) {
-                    let (data, is_tempo) = unpack_event(packed);
+                    // let (data, is_tempo) = unpack_event(packed);
+                    let data = packed.data;
+                    let is_tempo = packed.is_tempo;
+                    
                     buf.push(UnpackedEvent {
                         idx: idx as u32,
+                        track: packed.track,
                         data,
                         is_tempo,
                     });
@@ -315,7 +336,7 @@ pub fn play_parsed_events_batched(
                     bpm_us_per_qn = ev.data as u64;
                     multiplier = (bpm_us_per_qn as f64) / (time_div as f64) * 10.0;
                 } else {
-                    send_direct_data(ev.data);
+                    send_direct_data(ev.data, ev.track);
                 }
 
                 while delta_idx < n_deltas {

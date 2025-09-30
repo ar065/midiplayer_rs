@@ -48,7 +48,7 @@ fn main() {
     let num_tracks = tracks.len();
 
     let start = Instant::now();
-    let parsed = parse_midi_events(tracks, time_div, 0);
+    let parsed = parse_midi_events(tracks, time_div);
     let total_ms = parsed.total_duration.as_millis();
     let minutes = total_ms / 60_000;
     let seconds = (total_ms % 60_000) / 1_000;
@@ -83,7 +83,7 @@ fn main() {
     play_parsed_events_batched(
         &parsed,
         time_div,
-        move |data| {
+        move |data, _track| {
             play_stream.send_direct_data(data);
         },
         None,
