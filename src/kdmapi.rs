@@ -6,6 +6,7 @@ use lazy_static::lazy_static;
 use libloading::{Error, Library, Symbol};
 #[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStrExt;
+use std::ffi::OsStr;
 use std::{
     ffi::{c_char, c_void},
     sync::atomic::{AtomicBool, Ordering},
