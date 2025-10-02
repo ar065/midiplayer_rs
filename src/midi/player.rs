@@ -237,10 +237,10 @@ pub fn play_parsed_events(
 
 #[derive(Copy, Clone, Debug)]
 pub struct UnpackedEvent {
-    idx: u32,
-    data: u32,
-    track: u16,
-    is_tempo: bool,
+    pub idx: u32,
+    pub data: u32,
+    pub track: u16,
+    pub is_tempo: bool,
 }
 
 pub fn play_parsed_events_batched(
