@@ -236,7 +236,7 @@ pub fn play_parsed_events(
 }
 
 #[derive(Copy, Clone, Debug)]
-struct UnpackedEvent {
+pub struct UnpackedEvent {
     idx: u32,
     data: u32,
     track: u16,
