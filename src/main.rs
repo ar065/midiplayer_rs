@@ -2,7 +2,9 @@
 
 mod midi;
 use std::sync::Arc;
-use std::time::Instant;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use thousands::Separable;
 
@@ -11,8 +13,11 @@ use clap::{Parser, ValueHint};
 use crate::midi::player::{play_parsed_events, play_parsed_events_batched};
 use crate::midi::{loader::load_midi_file, player::parse_midi_events};
 
+mod stats_logger;
+
 mod kdmapi;
 use crate::kdmapi::KDMAPI;
+use crate::stats_logger::StatsLogger;
 
 macro_rules! must {
     ($expr:expr) => {
@@ -38,6 +43,10 @@ struct Args {
         required = true
     )]
     file: String,
+}
+
+struct Shared {
+    evps_logger: StatsLogger,
 }
 
 fn main() {
@@ -80,10 +89,41 @@ fn main() {
 
     let play_stream = Arc::clone(&stream);
 
+    let shared = Arc::new(Shared {
+        evps_logger: StatsLogger::new(60 as usize),
+    });
+
+    let counter = Arc::new(AtomicU32::new(0));
+
+    // logger thread
+    let sd = shared.clone();
+    let counter_clone = counter.clone();
+    thread::spawn(move || {
+        let mut last_flush = Instant::now();
+        loop {
+            // drain the atomic into local var
+            let count = counter_clone.swap(0, Ordering::Relaxed);
+            if count > 0 {
+                sd.evps_logger.increment(count);
+            }
+
+            if last_flush.elapsed() >= Duration::from_millis(16) {
+                sd.evps_logger.next_frame();
+                println!("Ev/s: {}", sd.evps_logger.get_eps().separate_with_commas());
+                last_flush = Instant::now();
+            }
+
+            thread::sleep(Duration::from_millis(1));
+        }
+    });
+
+    // event loop — as cheap as it gets
+    let counter_clone = counter.clone();
     play_parsed_events_batched(
         &parsed,
         time_div,
         move |data, _track| {
+            counter_clone.fetch_add(1, Ordering::Relaxed);
             play_stream.send_direct_data(data);
         },
         None,
