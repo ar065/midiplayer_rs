@@ -78,7 +78,6 @@ pub fn parse_midi_events(mut tracks: Vec<TrackData>, time_div: u16) -> ParsedMid
                         }
                     } else if status == 0xFF {
                         track.process_meta_event(&mut multiplier, &mut bpm_us_per_qn, time_div);
-                        // events.push(pack_event(bpm_us_per_qn as u32, true));
                         events.push(Event {
                             data: bpm_us_per_qn as u32,
                             track: track_num, // not needed but whatever
@@ -293,7 +292,7 @@ pub fn play_parsed_events_batched(
                     // let (data, is_tempo) = unpack_event(packed);
                     let data = packed.data;
                     let is_tempo = packed.is_tempo;
-                    
+
                     buf.push(UnpackedEvent {
                         idx: idx as u32,
                         track: packed.track,
