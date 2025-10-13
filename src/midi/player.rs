@@ -1,7 +1,9 @@
 use crate::midi::track_data::TrackData;
 use crate::midi::utils::{delay_execution_100ns, get_time_100ns};
 use crossbeam_channel::{Receiver, Sender, bounded};
+use rayon::prelude::*;
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 use thousands::Separable;
@@ -22,114 +24,171 @@ pub struct ParsedMidi {
     pub note_count: u64,
 }
 
-pub fn parse_midi_events(mut tracks: Vec<TrackData>, time_div: u16) -> ParsedMidi {
-    let mut events: Vec<Event> = Vec::with_capacity(1024);
-    let mut deltas: Vec<(u32, u32)> = Vec::with_capacity(128);
+#[derive(Debug, Clone)]
+struct TrackEvents {
+    events: Vec<(u64, Event)>, // (tick, event)
+    tempo_changes: Vec<(u64, u64)>, // (tick, us_per_qn)
+    note_count: u64,
+    max_tick: u64,
+}
 
-    let mut tick: u64 = 0;
-    let mut bpm_us_per_qn: u64 = 500_000;
-    let mut multiplier: f64 = 0.0;
+fn parse_single_track(mut track: TrackData, track_idx: u16, time_div: u16) -> TrackEvents {
+    let mut events = Vec::with_capacity(4096);
+    let mut tempo_changes = Vec::with_capacity(16);
+    let mut note_count = 0u64;
+    let mut max_tick = 0u64;
+    let mut bpm_us_per_qn = 500_000u64;
 
-    let mut total_ticks: u64 = 0;
-    let mut note_count: u64 = 0;
-    let mut total_us_acc: u128 = 0;
+    while track.length > 0 {
+        let current_tick = track.tick;
+        max_tick = max_tick.max(current_tick);
 
+        track.update_command();
+        track.update_message();
+
+        let message = track.message;
+        let status = (message & 0xFF) as u8;
+
+        if status < 0xF0 {
+            // Regular MIDI message
+            if (0x90..=0x9F).contains(&status) {
+                let velocity = ((message >> 16) & 0xFF) as u8;
+                if velocity > 0 {
+                    note_count += 1;
+                }
+            }
+
+            events.push((
+                current_tick,
+                Event {
+                    data: message,
+                    track: track_idx,
+                    is_tempo: false,
+                },
+            ));
+        } else if status == 0xFF {
+            // Meta event - check for tempo
+            let mut multiplier = 0.0f64;
+            let old_bpm = bpm_us_per_qn;
+            track.process_meta_event(&mut multiplier, &mut bpm_us_per_qn, time_div);
+            
+            if bpm_us_per_qn != old_bpm {
+                tempo_changes.push((current_tick, bpm_us_per_qn));
+            }
+        }
+
+        track.update_tick();
+    }
+
+    events.shrink_to_fit();
+    tempo_changes.shrink_to_fit();
+
+    TrackEvents {
+        events,
+        tempo_changes,
+        note_count,
+        max_tick,
+    }
+}
+
+pub fn parse_midi_events(tracks: Vec<TrackData>, time_div: u16) -> ParsedMidi {
     let total_tracks = tracks.len();
-    let mut finished_tracks: u128 = 0;
+    
+    if tracks.is_empty() {
+        return ParsedMidi {
+            events: Vec::new(),
+            deltas: Vec::new(),
+            total_ticks: 0,
+            total_duration: Duration::ZERO,
+            note_count: 0,
+        };
+    }
 
-    loop {
-        let mut any_active = false;
-        let group_start = events.len() as u32;
+    println!("\r\x1b[KParsing {} tracks in parallel...", total_tracks);
+    io::stdout().flush().unwrap();
 
-        for (track_idx, track) in tracks.iter_mut().enumerate() {
-            let track_num: u16 = track_idx.try_into().expect("too many tracks (>65535)");
+    let finished_counter = AtomicU64::new(0);
 
-            if track.length == 0 {
-                continue;
-            }
-            any_active = true;
+    let track_results: Vec<TrackEvents> = tracks
+        .into_par_iter()
+        .enumerate()
+        .map(|(idx, track)| {
+            let result = parse_single_track(track, idx as u16, time_div);
+            
+            let finished = finished_counter.fetch_add(1, Ordering::Relaxed) + 1;
+            print!(
+                "\r\x1b[KFinished track {}/{} -> {} events parsed",
+                finished,
+                total_tracks,
+                result.events.len().separate_with_commas()
+            );
+            io::stdout().flush().unwrap();
+            
+            result
+        })
+        .collect();
 
-            if track.tick <= tick {
-                while track.length > 0 && track.tick <= tick {
-                    track.update_command();
-                    track.update_message();
+    println!("\r\x1b[KMerging events from {} tracks...", total_tracks);
+    io::stdout().flush().unwrap();
 
-                    let message = track.message;
-                    let status = (message & 0xFF) as u8;
+    // Calculate total events needed
+    let total_event_count: usize = track_results.iter().map(|t| t.events.len()).sum();
+    let total_tempo_changes: usize = track_results.iter().map(|t| t.tempo_changes.len()).sum();
+    
+    let mut all_events = Vec::with_capacity(total_event_count + total_tempo_changes);
+    let note_count: u64 = track_results.iter().map(|t| t.note_count).sum();
+    let total_ticks = track_results.iter().map(|t| t.max_tick).max().unwrap_or(0);
 
-                    if status < 0xF0 {
-                        if (0x90..=0x9F).contains(&status) {
-                            let velocity = ((message >> 16) & 0xFF) as u8;
-                            if velocity > 0 {
-                                note_count += 1;
-                            }
-
-                            events.push(Event {
-                                data: message,
-                                track: track_num,
-                                is_tempo: false,
-                            });
-                        } else {
-                            events.push(Event {
-                                data: message,
-                                track: track_num,
-                                is_tempo: false,
-                            });
-                        }
-                    } else if status == 0xFF {
-                        track.process_meta_event(&mut multiplier, &mut bpm_us_per_qn, time_div);
-                        events.push(Event {
-                            data: bpm_us_per_qn as u32,
-                            track: track_num, // not needed but whatever
-                            is_tempo: true,
-                        });
-                    }
-
-                    track.update_tick();
-                }
-            }
-
-            if track.length == 0 {
-                finished_tracks += 1;
-                print!(
-                    "\r\x1b[KFinished track {}/{} -> {} total events.",
-                    finished_tracks,
-                    total_tracks,
-                    events.len().separate_with_commas()
-                );
-                io::stdout().flush().unwrap();
-            }
+    // Merge tempo changes
+    for track_result in &track_results {
+        for &(tick, us_per_qn) in &track_result.tempo_changes {
+            all_events.push((
+                tick,
+                Event {
+                    data: us_per_qn as u32,
+                    track: 0, // tempo events don't need track info
+                    is_tempo: true,
+                },
+            ));
         }
+    }
 
-        if !any_active {
-            break;
-        }
+    // Merge regular events
+    for track_result in track_results {
+        all_events.extend(track_result.events);
+    }
 
-        tracks.retain(|t| t.length > 0);
+    // Sort all events by tick (stable sort to preserve track order for same tick)
+    all_events.par_sort_by_key(|&(tick, _)| tick);
 
-        let delta_tick = tracks
-            .iter()
-            .filter_map(|t| {
-                if t.length > 0 {
-                    Some(t.tick - tick)
-                } else {
-                    None
-                }
-            })
-            .min()
-            .unwrap_or(0);
+    println!("\r\x1b[KBuilding delta table...");
+    io::stdout().flush().unwrap();
 
-        if events.len() > group_start as usize && delta_tick > 0 {
-            let last_idx = events.len() as u32 - 1;
-            deltas.push((last_idx, delta_tick.min(u32::MAX as u64) as u32));
-        }
-
-        if delta_tick > 0 {
+    // Build final events and deltas
+    let mut events = Vec::with_capacity(all_events.len());
+    let mut deltas = Vec::with_capacity(all_events.len() / 10);
+    
+    let mut prev_tick = 0u64;
+    let mut bpm_us_per_qn = 500_000u64;
+    let mut total_us_acc = 0u128;
+    
+    for (i, (tick, event)) in all_events.iter().enumerate() {
+        if *tick > prev_tick {
+            let delta_tick = tick - prev_tick;
+            
+            if i > 0 {
+                deltas.push(((i - 1) as u32, delta_tick.min(u32::MAX as u64) as u32));
+            }
+            
             total_us_acc += (delta_tick as u128) * (bpm_us_per_qn as u128) / (time_div as u128);
+            prev_tick = *tick;
         }
-
-        tick = tick.wrapping_add(delta_tick);
-        total_ticks = tick;
+        
+        if event.is_tempo {
+            bpm_us_per_qn = event.data as u64;
+        }
+        
+        events.push(*event);
     }
 
     let total_nanos = total_us_acc.saturating_mul(1000);
@@ -141,6 +200,13 @@ pub fn parse_midi_events(mut tracks: Vec<TrackData>, time_div: u16) -> ParsedMid
 
     events.shrink_to_fit();
     deltas.shrink_to_fit();
+
+    println!(
+        "\r\x1b[KParsing complete: {} total events, {} notes",
+        events.len().separate_with_commas(),
+        note_count.separate_with_commas()
+    );
+    io::stdout().flush().unwrap();
 
     ParsedMidi {
         events,
@@ -183,7 +249,6 @@ pub fn play_parsed_events(
     while i < n {
         loop {
             let packed = unsafe { *parsed.events.get_unchecked(i) };
-            // let (data, is_tempo) = unpack_event(packed);
             let data = packed.data;
             let is_tempo = packed.is_tempo;
 
@@ -267,9 +332,8 @@ pub fn play_parsed_events_batched(
     let (pool_tx, pool_rx): (Sender<Vec<UnpackedEvent>>, Receiver<Vec<UnpackedEvent>>) =
         bounded(lookahead_batches);
 
-    // pre-fill the pool with empty Vecs (reusable buffers)
+    // Pre-fill the pool with empty Vecs (reusable buffers)
     for _ in 0..lookahead_batches {
-        // allocate with capacity to avoid resizes
         pool_tx
             .send(Vec::with_capacity(batch_size))
             .expect("pool prefill should succeed");
@@ -289,7 +353,6 @@ pub fn play_parsed_events_batched(
 
                 buf.clear();
                 for (idx, &packed) in (&mut iter).by_ref().take(batch_size) {
-                    // let (data, is_tempo) = unpack_event(packed);
                     let data = packed.data;
                     let is_tempo = packed.is_tempo;
 
@@ -302,7 +365,6 @@ pub fn play_parsed_events_batched(
                 }
 
                 if buf.is_empty() {
-                    // No events left.
                     let _ = parser_tx.send(buf);
                     break;
                 }

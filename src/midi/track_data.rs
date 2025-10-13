@@ -79,7 +79,7 @@ impl TrackData {
 
         let msg_type = (self.message & 0xFF) as u8;
         match msg_type {
-            0x00..=0xBF | 0xE0..=0xEf => {
+            0x00..=0xBF | 0xE0..=0xEF => {
                 if self.offset + 2 <= self.length {
                     self.temp = u32::from(self.data[self.offset]) << 8;
                     self.temp |= u32::from(self.data[self.offset + 1]) << 16;

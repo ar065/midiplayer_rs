@@ -10,7 +10,7 @@ use thousands::Separable;
 
 use clap::{Parser, ValueHint};
 
-use crate::midi::player::{play_parsed_events, play_parsed_events_batched};
+use crate::midi::player::play_parsed_events;
 use crate::midi::{loader::load_midi_file, player::parse_midi_events};
 
 mod stats_logger;
@@ -119,7 +119,7 @@ fn main() {
 
     // event loop — as cheap as it gets
     let counter_clone = counter.clone();
-    play_parsed_events_batched(
+    play_parsed_events(
         &parsed,
         time_div,
         move |data, _track| {
